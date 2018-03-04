@@ -153,9 +153,7 @@ public class TagBalancingHtmlStreamEventReceiver
       int top = openElements.get(nOpen - 1);
       // Close all the elements that cannot contain the content to open.
       while (true) {
-        boolean canContain = canContain(elIndex, top, nOpen - 1)
-            && !(elIndex == A_TAG
-                 && openElements.lastIndexOf(A_TAG) >= 0);
+        boolean canContain = canContain(elIndex, top, nOpen - 1);
         if (canContain) {
           break;
         }

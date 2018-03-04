@@ -34,6 +34,14 @@ import javax.annotation.Nullable;
 
 import org.junit.Test;
 
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.nio.file.Files;
+import java.nio.file.Paths;
+import java.util.stream.Collectors;
+
 
 @SuppressWarnings("javadoc")
 public class HtmlSanitizerTest extends TestCase {
@@ -412,6 +420,16 @@ public class HtmlSanitizerTest extends TestCase {
       String[] test = tests[i];
       assertEquals(i + " : " + test[0], test[1], sanitize(test[0]));
     }
+  }
+
+  @Test
+  public static final void testNestedA() {
+    PolicyFactory policy = Sanitizers.TABLES.and(Sanitizers.LINKS);
+
+    String input = "<a href=\"http://localhost\" rel=\"nofollow\"><table>" +
+            "<tbody><tr><td><a href=\"http://localhost\" rel=\"nofollow\"></a></td></tr></tbody></table></a>";
+
+    assertEquals(input, policy.sanitize(input));
   }
 
   private static String sanitize(@Nullable String html) {
