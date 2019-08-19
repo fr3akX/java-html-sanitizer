@@ -33,11 +33,14 @@ import java.io.IOException;
 import javax.annotation.Nullable;
 
 /** Encoders and decoders for HTML. */
-final class Encoding {
+public final class Encoding {
 
   /**
    * Decodes HTML entities to produce a string containing only valid
    * Unicode scalar values.
+   *
+   * @param s text/html
+   * @return text/plain
    */
   public static String decodeHtml(String s) {
     int firstAmp = s.indexOf('&');
@@ -51,10 +54,8 @@ final class Encoding {
       int pos = 0;
       int amp = firstAmp;
       while (amp >= 0) {
-        long endAndCodepoint = HtmlEntities.decodeEntityAt(s, amp, n);
-        int end = (int) (endAndCodepoint >>> 32);
-        int codepoint = (int) endAndCodepoint;
-        sb.append(s, pos, amp).appendCodePoint(codepoint);
+        sb.append(s, pos, amp);
+        int end = HtmlEntities.appendDecodedEntity(s, amp, n, sb);
         pos = end;
         amp = s.indexOf('&', end);
       }
@@ -151,11 +152,40 @@ final class Encoding {
     return -1;
   }
 
+  /**
+   * Appends an encoded form of plainText to output where the encoding is
+   * sufficient to prevent an HTML parser from interpreting any characters in
+   * the appended chunk as part of an attribute or tag boundary.
+   *
+   * @param plainText text/plain
+   * @param output a buffer of text/html that has a well-formed HTML prefix that
+   *     ends after the open-quote of an attribute value and does not yet contain
+   *     a corresponding close quote.
+   *     Modified in place.
+   */
   static void encodeHtmlAttribOnto(String plainText, Appendable output)
       throws IOException {
     encodeHtmlOnto(plainText, output, "{\u200B");
   }
 
+  /**
+   * Appends an encoded form of plainText to putput where the encoding is
+   * sufficient to prevent an HTML parser from transitioning out of the
+   * <a href="https://html.spec.whatwg.org/multipage/parsing.html#data-state">
+   * Data state</a>.
+   *
+   * This is suitable for encoding a text node inside any element that does not
+   * require special handling as a context element (see "context element" in
+   * <a href="https://html.spec.whatwg.org/multipage/parsing.html#parsing-html-fragments">
+   * step 4</a>.)
+   *
+   * @param plainText text/plain
+   * @param output a buffer of text/html that has a well-formed HTML prefix that
+   *     would leave an HTML parser in the Data state if it were to encounter a space
+   *     character as the next character.  In practice this means that the buffer
+   *     does not contain partial tags or comments, and does not have an unclosed
+   *     element with a special content model.
+   */
   static void encodePcdataOnto(String plainText, Appendable output)
       throws IOException {
     // Avoid problems with client-side template languages like
@@ -166,7 +196,23 @@ final class Encoding {
     encodeHtmlOnto(plainText, output, "{<!-- -->");
   }
 
-  static void encodeRcdataOnto(String plainText, Appendable output)
+  /**
+   * Appends an encoded form of plainText to putput where the encoding is
+   * sufficient to prevent an HTML parser from transitioning out of the
+   * <a href="https://html.spec.whatwg.org/multipage/parsing.html#rcdata-state">
+   * RCDATA state</a>.
+   *
+   * This is suitable for encoding a text node inside a {@code <textarea>} or
+   * {@code <title>} element outside foreign content.
+   *
+   * @param plainText text/plain
+   * @param output a buffer of text/html that has a well-formed HTML prefix that
+   *     would leave an HTML parser in the Data state if it were to encounter a space
+   *     character as the next character.  In practice this means that the buffer
+   *     does not contain partial tags or comments, and the most recently opened
+   *     element is `<textarea>` or `<title>` and that element is still open.
+   */
+  public static void encodeRcdataOnto(String plainText, Appendable output)
       throws IOException {
     // Avoid problems with client-side template languages like
     // Angular & Polymer which attach special significance to text like
@@ -207,7 +253,6 @@ final class Encoding {
           && (
               // Devanagari vowel
               ch <= 0x94F
-              || 0x93A <= ch && ch <= 0x94F
               // Benagli vowels
               || 0x985 <= ch && ch <= 0x994
               || 0x9BE <= ch && ch < 0x9CC  // 0x9CC (Bengali AU) is ok
@@ -317,7 +362,7 @@ final class Encoding {
   };
 
   /** Maps ASCII chars that need to be encoded to an equivalent HTML entity. */
-  static final String[] REPLACEMENTS = new String[0x80];
+  private static final String[] REPLACEMENTS = new String[0x80];
   static {
     for (int i = 0; i < ' '; ++i) {
       // We elide control characters so that we can ensure that our output is
@@ -343,8 +388,8 @@ final class Encoding {
   }
 
   /**
-   * {@code DECODES_TO_SELF[c]} is true iff the codepoint c decodes to itself in
-   * an HTML5 text node or properly quoted attribute value.
+   * IS_BANNED_ASCII[i] where is an ASCII control character codepoint (&lt; 0x20)
+   * is true for control characters that are not allowed in an XML source text.
    */
   private static boolean[] IS_BANNED_ASCII = new boolean[0x20];
   static {

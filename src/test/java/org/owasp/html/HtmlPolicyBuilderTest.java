@@ -30,10 +30,12 @@ package org.owasp.html;
 
 import java.util.List;
 import java.util.Locale;
+import java.util.regex.Pattern;
 
 import org.junit.Test;
 
 import com.google.common.base.Joiner;
+import com.google.common.collect.ImmutableSet;
 
 import junit.framework.TestCase;
 
@@ -173,6 +175,18 @@ public class HtmlPolicyBuilderTest extends TestCase {
               // Allows http.
               .allowAttributes("href").onElements("a")
               .requireRelNofollowOnLinks()));
+  }
+
+  @Test
+  public static final void testLinksWithNofollowAlreadyPresent() {
+    assertEquals(
+        "html <a href=\"/\" rel=\"nofollow\">link</a>",
+        apply(
+            new HtmlPolicyBuilder()
+              .allowElements("a")
+              .allowAttributes("href").onElements("a")
+              .requireRelNofollowOnLinks(),
+            "html <a href='/' rel='nofollow'>link</a>"));
   }
 
   @Test
@@ -335,6 +349,89 @@ public class HtmlPolicyBuilderTest extends TestCase {
             + "<image src=\"http://example.com/foo.png\" />"
             + "<Image src=\"http://example.com/bar.png\">"
             + "<IMAGE>"));
+  }
+
+  @Test
+  public static final void testImgSrcsetSyntax() {
+    assertEquals(
+        ""
+        + "<img srcset=\"http://example.com/foo.png\" />\n"
+        + "<img srcset=\"http://example.com/foo.png 640w\" />\n"
+        + "<img srcset=\"http://example.com/foo.png 48x\" />\n"
+        + "<img srcset=\"http://example.com/foo.png .123x\" />\n"
+        + "<img srcset=\"http://example.com/foo.png .123e2x\" />\n"
+        + "<img srcset=\"http://example.com/foo.png 123.456E-1x\" />\n"
+        + "<img srcset=\"http://example.com/foo.png -123x\" />\n"
+        + "no float: \n"
+        + "no fraction: \n"
+        + "no exponent: \n"
+        + "<img srcset=\"/big.png 64w , /little.png\" />\n"
+        + "<img srcset=\"/big.png 64w , /little.png\" />\n"
+        + "<img srcset=\"/big.png 64w , /little.png\" />\n"
+        + "<img srcset=\"foo%2cbar.png\" />\n"
+        + "empty: \n"
+        + "only space: \n"
+        + "only comma: \n"
+        + "comma at end: <img srcset=\"foo.png\" />\n"
+        + "comma stuck to url: \n"
+        + "commas inside: <img srcset=\"foo.png%2c%2cbar.png\" />\n"
+        + "double commas 1: \n"
+        + "double commas 2: \n"
+        + "bad url: <img srcset=\"foo.png 1w\" />\n",
+
+        apply(
+            new HtmlPolicyBuilder()
+            .allowElements("img")
+            .allowAttributes("srcset").onElements("img")
+            .allowStandardUrlProtocols(),
+            ""
+            + "<img srcset=\"http://example.com/foo.png\" />\n"
+            + "<img srcset=\"http://example.com/foo.png 640w\" />\n"
+            + "<img srcset=\"http://example.com/foo.png 48x\" />\n"
+            + "<img srcset=\"http://example.com/foo.png .123x\" />\n"
+            + "<img srcset=\"http://example.com/foo.png .123e2x\" />\n"
+            + "<img srcset=\"http://example.com/foo.png 123.456E-1x\" />\n"
+            + "<img srcset=\"http://example.com/foo.png -123x\" />\n"
+            + "no float: <img srcset=\"http://example.com/foo.png -x\" />\n"
+            + "no fraction: <img srcset=\"http://example.com/foo.png -.e1\" />\n"
+            + "no exponent: <img srcset=\"http://example.com/foo.png -1e+x\" />\n"
+            + "<img srcset=\"/big.png 64w, /little.png\" />\n"
+            + "<img srcset=\" /big.png 64w , /little.png\" />\n"
+            + "<img srcset=\"\t\t/big.png 64w\r\n,/little.png\t\t\" />\n"
+            + "<img srcset=\"foo,bar.png\" />\n"
+            + "empty: <img srcset=\"\" />\n"
+            + "only space: <img srcset=\"  \" />\n"
+            + "only comma: <img srcset=\",\" />\n"
+            + "comma at end: <img srcset=\"foo.png ,\" />\n"  // ok
+            + "comma stuck to url: <img srcset=\"bar.png,\" />\n"  // not ok
+            + "commas inside: <img srcset=\"foo.png,,bar.png\" />\n"  // escaped
+            + "double commas 1: <img srcset=\"a ,, b\" />\n"  // not ok
+            + "double commas 2: <img srcset=\"a , , b\" />\n"  // not ok
+            + "bad url: <img srcset=\"foo.png 1w, javascript:evil()\" />\n"
+            ));
+  }
+
+  @Test
+  public static final void testUrlChecksLayer() {
+    assertEquals(
+        ""
+        + "<img src=\"http://example.com/OK.png\" />\n"
+        + "\n"
+        + "<img srcset=\"http://example.com/bar.png#OK 1w\" />",
+
+        apply(
+            new HtmlPolicyBuilder()
+            .allowElements("img")
+            .allowAttributes("src", "srcset")
+                .matching(Pattern.compile(".*OK.*"))
+                .onElements("img")
+            .allowStandardUrlProtocols(),
+            ""
+            + "<img src=\"http://example.com/OK.png\" />\n"
+            + "<img src=\"http://example.com/\" />\n"
+            + "<img srcset=\"http://example.com/bar.png#OK 1w, javascript:alert%28%27OK%27%29\">"
+            )
+        );
   }
 
   @Test
@@ -724,6 +821,46 @@ public class HtmlPolicyBuilderTest extends TestCase {
   }
 
   @Test
+  public static final void testEmptyDefaultLinkRelsSet() {
+    PolicyFactory pf = new HtmlPolicyBuilder()
+        .allowElements("a")
+        .allowAttributes("href", "target").onElements("a")
+        .allowStandardUrlProtocols()
+        .skipRelsOnLinks("noopener", "noreferrer")
+        .toFactory();
+
+    assertEquals(
+        "<a href=\"http://example.com\" target=\"_blank\">eg</a>",
+        pf.sanitize("<a href=\"http://example.com\" target=\"_blank\">eg</a>"));
+  }
+
+  @Test
+  public static final void testExplicitRelsSkip() {
+    PolicyFactory pf = new HtmlPolicyBuilder()
+        .allowElements("a")
+        .allowAttributes("href", "target", "rel").onElements("a")
+        .allowStandardUrlProtocols()
+        .skipRelsOnLinks("noopener", "noreferrer")
+        .toFactory();
+
+    assertEquals(
+        "<a href=\"http://example.com\" target=\"_blank\">text</a>",
+        pf.sanitize(
+            "<a href=\"http://example.com\" target=\"_blank\""
+            + " rel=\"noopener\">text</a>"));
+    assertEquals(
+        "<a href=\"http://example.com\" target=\"_blank\">text</a>",
+        pf.sanitize(
+            "<a href=\"http://example.com\" target=\"_blank\""
+            + " rel=\"noreferrer noopener\">text</a>"));
+    assertEquals(
+        "<a href=\"http://example.com\" target=\"_blank\" rel=\"nofoo nobar nobaz\">text</a>",
+        pf.sanitize(
+            "<a href=\"http://example.com\" target=\"_blank\""
+            + " rel=\"nofoo noopener nobar  NOREFERRER nobaz \">text</a>"));
+  }
+
+  @Test
   public static final void testScopingExitInNoContent() {
     PolicyFactory pf = new HtmlPolicyBuilder()
         .allowElements("table", "tr", "td", "noscript")
@@ -761,6 +898,64 @@ public class HtmlPolicyBuilderTest extends TestCase {
             .allowElements("dir", "li", "ul")
             .allowAttributes("compact").onElements("dir"),
             "<dir compact=\"compact\"><li>something</li></dir>"));
+  }
+
+  @Test
+  public static void testScriptTagWithCommentBlockContainingHtmlCommentEnd() {
+    PolicyFactory scriptSanitizer = new HtmlPolicyBuilder()
+        // allow scripts of type application/json
+        .allowElements(
+            new ElementPolicy() {
+              public String apply(String elementName, List<String> attrs) {
+                int typeIndex = attrs.indexOf("type");
+                if (typeIndex < 0 || attrs.size() < typeIndex + 1
+                    || !attrs.get(typeIndex + 1).equals("application/json")) {
+                  return null;
+                }
+                return elementName;
+              }
+            },
+            "script")
+        // allow contents in this script tag
+        .allowTextIn("script")
+        // keep type attribute in application/json script tag
+        .allowAttributes("type").matching(true, ImmutableSet.of("application/json")).onElements("script")
+        .toFactory();
+
+    String mismatchedHtmlComments = "<script type=\"application/json\">\n" +
+            "<!--\n" +
+            "{\"field\":\"-->\"}\n" +
+            "// -->\n" +
+            "</script>";
+    assertEquals(
+        "<script type=\"application/json\"></script>",
+        scriptSanitizer.sanitize(mismatchedHtmlComments));
+
+    String htmlMetaCharsEscaped = "<script type=\"application/json\">\n" +
+        "<!--\n" +
+        "{\"field\":\"--\\u003c\"}\n" +
+        "// -->\n" +
+        "</script>";
+    assertEquals(
+        htmlMetaCharsEscaped,
+        scriptSanitizer.sanitize(htmlMetaCharsEscaped));
+  }
+
+  @Test
+  public static final void testNoscriptInAttribute() {
+    PolicyFactory pf = new HtmlPolicyBuilder()
+        .allowElements("img", "p", "noscript")
+        .allowAttributes("title").globally()
+        .allowAttributes("img").onElements("img")
+        .toFactory();
+
+    assertEquals(
+        "<noscript>"
+        + "<p title=\"&lt;/noscript&gt;&lt;img src&#61;x onerror&#61;alert(1)&gt;\">"
+        + "</p>"
+        + "</noscript>",
+        pf.sanitize(
+            "<noscript><p title=\"</noscript><img src=x onerror=alert(1)>\">"));
   }
 
   private static String apply(HtmlPolicyBuilder b) {

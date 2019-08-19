@@ -438,7 +438,7 @@ public class HtmlPolicyBuilder {
 
   /**
    * Opts out of some of the {@link #DEFAULT_RELS_ON_TARGETTED_LINKS} from being added
-   * to links, and reverses pre
+   * to links, and reverses previous calls to requireRelsOnLinks with the given link values.
    *
    * @see #requireRelsOnLinks
    */
@@ -524,6 +524,11 @@ public class HtmlPolicyBuilder {
   public HtmlPolicyBuilder allowStyling(CssSchema whitelist) {
     invalidateCompiledState();
 
+    this.stylingPolicySchema =
+        this.stylingPolicySchema == null
+        ? whitelist
+        : CssSchema.union(stylingPolicySchema, whitelist);
+
     // Allow the style attribute, and then we will fix it up later.  This allows
     // us to attach the final URL policy to the style attribute policy, while
     // still not allowing styles when allowStyling is followed by a call to
@@ -531,10 +536,6 @@ public class HtmlPolicyBuilder {
     this.allowAttributesGlobally(
         AttributePolicy.IDENTITY_ATTRIBUTE_POLICY, ImmutableList.of("style"));
 
-    this.stylingPolicySchema =
-        this.stylingPolicySchema == null
-        ? whitelist
-        : CssSchema.union(stylingPolicySchema, whitelist);
     return this;
   }
 
@@ -586,14 +587,64 @@ public class HtmlPolicyBuilder {
   }
 
   /**
-   * Names of attributes from HTML 4 whose values are URLs.
-   * Other attributes, e.g. <code>style</code> may contain URLs even though
-   * there values are not URLs.
+   * Maps attribute names that need extra handling to producers of those
+   * extra guards.
    */
-  private static final Set<String> URL_ATTRIBUTE_NAMES = ImmutableSet.of(
-      "action", "archive", "background", "cite", "classid", "codebase", "data",
-      "dsync", "formaction", "href", "icon", "longdesc", "manifest", "poster",
-      "profile", "src", "srcset", "usemap");
+  private static final Map<String, AttributeGuardMaker> ATTRIBUTE_GUARDS;
+  static {
+    // For each URL attribute that is allowed, we further constrain it by
+    // only allowing the value through if it specifies no protocol, or if it
+    // specifies one in the allowedProtocols white-list.
+    // This is done regardless of whether any protocols have been allowed, so
+    // allowing the attribute "href" globally with the identity policy but
+    // not white-listing any protocols, effectively disallows the "href"
+    // attribute globally.
+    ImmutableMap.Builder<String, AttributeGuardMaker> b =
+        ImmutableMap.builder();
+    AttributeGuardMaker identityGuard = new AttributeGuardMaker() {
+      @Override
+      AttributePolicy makeGuard(AttributeGuardIntermediates intermediates) {
+        return intermediates.urlAttributePolicy;
+      }
+    };
+    for (String urlAttributeName : new String[] {
+        "action", "archive", "background", "cite", "classid", "codebase", "data",
+        "dsync", "formaction", "href", "icon", "longdesc", "manifest", "poster",
+        "profile", "src", "usemap",
+    }) {
+      b.put(urlAttributeName, identityGuard);
+    }
+    b.put("style", new AttributeGuardMaker() {
+
+      @Override
+      AttributePolicy makeGuard(AttributeGuardIntermediates intermediates) {
+        if (intermediates.cssSchema == null) {
+          return null;
+        }
+        final AttributePolicy styleUrlPolicyFinal = AttributePolicy.Util.join(
+            intermediates.styleUrlPolicy, intermediates.urlAttributePolicy);
+        return new StylingPolicy(
+            intermediates.cssSchema,
+            new Function<String, String>() {
+              public String apply(String url) {
+                return styleUrlPolicyFinal.apply(
+                    "img", "src",
+                    url != null ? url : "about:invalid");
+              }
+            });
+      }
+
+    });
+    b.put("srcset", new AttributeGuardMaker() {
+
+      @Override
+      AttributePolicy makeGuard(AttributeGuardIntermediates intermediates) {
+        return new SrcsetAttributePolicy(intermediates.urlAttributePolicy);
+      }
+
+    });
+    ATTRIBUTE_GUARDS = b.build();
+  }
 
   /**
    * Produces a policy based on the allow and disallow calls previously made.
@@ -701,15 +752,7 @@ public class HtmlPolicyBuilder {
       }
     }
 
-    // Implement protocol policies.
-    // For each URL attribute that is allowed, we further constrain it by
-    // only allowing the value through if it specifies no protocol, or if it
-    // specifies one in the allowedProtocols white-list.
-    // This is done regardless of whether any protocols have been allowed, so
-    // allowing the attribute "href" globally with the identity policy but
-    // not white-listing any protocols, effectively disallows the "href"
-    // attribute globally.
-    StylingPolicy stylingPolicy = null;
+    // Add guards on top of any custom policies.
     {
       final AttributePolicy urlAttributePolicy;
       if (allowedProtocols.size() == 3
@@ -722,24 +765,16 @@ public class HtmlPolicyBuilder {
             allowedProtocols);
       }
 
-      if (this.stylingPolicySchema != null) {
-        final AttributePolicy styleUrlPolicyFinal = AttributePolicy.Util.join(
-            styleUrlPolicy, urlAttributePolicy);
-        stylingPolicy = new StylingPolicy(
-            stylingPolicySchema,
-            new Function<String, String>() {
-              public String apply(String url) {
-                return styleUrlPolicyFinal.apply("img", "src", url);
-              }
-            });
-      }
-
-      Set<String> toGuard = Sets.newLinkedHashSet(URL_ATTRIBUTE_NAMES);
-      for (String urlAttributeName : URL_ATTRIBUTE_NAMES) {
-        if (globalAttrPolicies.containsKey(urlAttributeName)) {
-          toGuard.remove(urlAttributeName);
-          globalAttrPolicies.put(urlAttributeName, AttributePolicy.Util.join(
-              urlAttributePolicy, globalAttrPolicies.get(urlAttributeName)));
+      Set<String> toGuard = Sets.newLinkedHashSet(ATTRIBUTE_GUARDS.keySet());
+      AttributeGuardIntermediates intermediates = new AttributeGuardIntermediates(
+          urlAttributePolicy, this.styleUrlPolicy, this.stylingPolicySchema);
+      for (Map.Entry<String, AttributeGuardMaker> e : ATTRIBUTE_GUARDS.entrySet()) {
+        String attributeName = e.getKey();
+        if (globalAttrPolicies.containsKey(attributeName)) {
+          toGuard.remove(attributeName);
+          AttributePolicy guard = e.getValue().makeGuard(intermediates);
+          globalAttrPolicies.put(attributeName, AttributePolicy.Util.join(
+              guard, globalAttrPolicies.get(attributeName)));
         }
       }
       // Implement guards not implemented on global policies in the per-element
@@ -747,19 +782,14 @@ public class HtmlPolicyBuilder {
       for (Map.Entry<String, Map<String, AttributePolicy>> e
            : attrPolicies.entrySet()) {
         Map<String, AttributePolicy> policies = e.getValue();
-        for (String urlAttributeName : toGuard) {
-          if (policies.containsKey(urlAttributeName)) {
-            policies.put(urlAttributeName, AttributePolicy.Util.join(
-                urlAttributePolicy, policies.get(urlAttributeName)));
+        for (String attributeName : toGuard) {
+          if (policies.containsKey(attributeName)) {
+            AttributePolicy guard = ATTRIBUTE_GUARDS.get(attributeName)
+                .makeGuard(intermediates);
+            policies.put(attributeName, AttributePolicy.Util.join(
+                guard, policies.get(attributeName)));
           }
         }
-      }
-    }
-    if (stylingPolicy != null) {
-      AttributePolicy old = globalAttrPolicies.get("style");
-      if (old != null) {
-        globalAttrPolicies.put(
-            "style", AttributePolicy.Util.join(old, stylingPolicy));
       }
     }
 
@@ -776,16 +806,6 @@ public class HtmlPolicyBuilder {
           = attrPolicies.get(elementName);
       if (elAttrPolicies == null) {
         elAttrPolicies = ImmutableMap.of();
-      }
-      if (stylingPolicy != null) {
-        AttributePolicy old = elAttrPolicies.get("style");
-        if (old != null) {
-          attrPolicies.put(
-              elementName,
-              elAttrPolicies = Maps.newLinkedHashMap(elAttrPolicies));
-          elAttrPolicies.put(
-              "style", AttributePolicy.Util.join(old, stylingPolicy));
-        }
       }
 
       ImmutableMap.Builder<String, AttributePolicy> attrs
@@ -989,12 +1009,27 @@ public class HtmlPolicyBuilder {
         if (hasTarget || !extra.isEmpty()) {
           int relIndex = indexOfAttributeValue("rel", attrs);
           String relValue;
+
           if (relIndex < 0 && hasTarget && extra.isEmpty() && skip.isEmpty()) {
             relValue = DEFAULT_RELS_ON_TARGETTED_LINKS_STR;
           } else {
             StringBuilder sb = new StringBuilder();
             if (relIndex >= 0) {
-              sb.append(attrs.get(relIndex)).append(' ');
+              // Preserve values that are not explicitly skipped.
+              String rels = attrs.get(relIndex);
+              int left = 0, n = rels.length();
+              for (int i = 0; i <= n; ++i) {
+                if (i == n || Strings.isHtmlSpace(rels.charAt(i))) {
+                  if (left < i) {
+                    if (skip.isEmpty()
+                        || !skip.contains(
+                            Strings.toLowerCase(rels.substring(left, i)))) {
+                      sb.append(rels, left, i).append(' ');
+                    }
+                  }
+                  left = i + 1;
+                }
+              }
             }
             for (String s : extra) {
               sb.append(s).append(' ');
@@ -1004,13 +1039,24 @@ public class HtmlPolicyBuilder {
                 sb.append(s).append(' ');
               }
             }
-            relValue = sb.substring(0, sb.length() - 1);
+            int sblen = sb.length();
+            if (sblen == 0) {
+              relValue = "";
+            } else {
+              relValue = sb.substring(0, sb.length() - 1);
+            }
           }
-          if (relIndex < 0) {
-            attrs.add("rel");
-            attrs.add(relValue);
+          if (relValue.isEmpty()) {
+            if (relIndex >= 0) {
+              attrs.subList(relIndex - 1, relIndex + 1).clear();
+            }
           } else {
-            attrs.set(relIndex, relValue);
+            if (relIndex < 0) {
+              attrs.add("rel");
+              attrs.add(relValue);
+            } else {
+              attrs.set(relIndex, relValue);
+            }
           }
         }
       }
@@ -1044,3 +1090,32 @@ public class HtmlPolicyBuilder {
   }
 }
 
+
+/**
+ * Given some policy builder state, produces a guard for an HTML attribute
+ * that needs extra handling on top of any policy-author-supplied custom
+ * attribute policy.
+ */
+abstract class AttributeGuardMaker {
+  abstract AttributePolicy makeGuard(AttributeGuardIntermediates intermediates);
+}
+
+/**
+ * A grab bag of state that is useful when coming up with guards for HTML
+ * attributes that need extra handling on top of any policy-author-supplied
+ * custom attribute policy.
+ */
+final class AttributeGuardIntermediates {
+  final AttributePolicy urlAttributePolicy;
+  final AttributePolicy styleUrlPolicy;
+  final CssSchema cssSchema;
+
+  AttributeGuardIntermediates(
+      AttributePolicy urlAttributePolicy,
+      AttributePolicy styleUrlPolicy,
+      CssSchema cssSchema) {
+    this.urlAttributePolicy = urlAttributePolicy;
+    this.styleUrlPolicy = styleUrlPolicy;
+    this.cssSchema = cssSchema;
+  }
+}

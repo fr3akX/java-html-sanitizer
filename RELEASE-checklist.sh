@@ -8,7 +8,10 @@ set -e
 
 
 # Make sure the build is ok via
-mvn -f aggregate clean verify site javadoc:jar source:jar
+mvn -Dguava.version=27.0-jre -f aggregate clean verify                    javadoc:jar source:jar
+mvn                          -f aggregate clean verify jacoco:report site javadoc:jar source:jar
+mvn install
+mvn org.sonatype.ossindex.maven:ossindex-maven-plugin:audit -f aggregate
 
 echo
 echo Browse to
@@ -58,6 +61,8 @@ find . -name pom.xml \
 # Make sure there's no snapshots left in any poms.
 find . -name pom.xml | xargs grep -- -SNAPSHOT
 
+./scripts/fix_javadoc_links.sh "$NEW_VERSION"
+
 # Make sure the change log is up-to-date.
 perl -i.bak \
      -pe 'if (m/^  [*] / && !$added) { $_ = qq(  * Release $ENV{"NEW_VERSION"}\n$_); $added = 1; }' \
@@ -87,7 +92,7 @@ find . -name pom.xml \
 
 git commit -am "Bumped dev version"
 
-git push origin master
+git push origin master --tags
 
 # Now Release
 echo '1. Go to oss.sonatype.org'
