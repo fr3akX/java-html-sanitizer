@@ -38425,9 +38425,6 @@ var cannedData = {
   },
   "impliedElements": {
     "table": {
-      "col": [
-        "colgroup"
-      ],
       "td": [
         "tbody",
         "tr"

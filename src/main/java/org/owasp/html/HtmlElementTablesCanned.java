@@ -328,9 +328,6 @@ final class HtmlElementTablesCanned {
         null,
         {
           {
-            27, 28
-          },
-          {
             127, 126, 135
           },
           {
