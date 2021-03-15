@@ -1,6 +1,17 @@
 # OWASP Java HTML Sanitizer Change Log
 
 Most recent at top.
+  * Release 20200713.1
+    * Do not lower-case SVG/MathML names.
+      This shouldn't cause problems since it was hard to write policies for
+      SBG, but be aware that SVG's `<textArea>` is now distinct from HTML's `<textarea>`.
+  * Release 20200615.1
+    * Change `.and` when combining two policies to respect explicit `skipIfEmpty` decisions.
+    * HTML entity decoding now follows HTML standard rules about when a semicolon is optional.
+      [Fixes #193](https://github.com/OWASP/java-html-sanitizer/issues/193)
+    * Fix table formatting [#137](https://github.com/OWASP/java-html-sanitizer/issues/137)
+  * Release 20191001.1
+    * Package as an OSGI bundle
   * Release 20190610.1
     * Recognize named HTML entities added in the last few years.
   * Release 20190503.1

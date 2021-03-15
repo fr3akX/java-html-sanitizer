@@ -1,12 +1,12 @@
 language: java
 sudo: false
+dist: trusty
 jdk:
   # It's important to test on all these because of a horrible hack in the POM.
-# - openjdk6  # No longer supported by Travis
+# - openjdk6
   - openjdk7
   - oraclejdk8
   - oraclejdk9
-  - openjdk10
   - oraclejdk11
 
 # Test each version with an appropriate Java version and flags to disable

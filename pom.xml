@@ -1,12 +1,12 @@
 <project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd">
   <modelVersion>4.0.0</modelVersion>
   <artifactId>owasp-java-html-sanitizer</artifactId>
-  <packaging>jar</packaging>
+  <packaging>bundle</packaging>
   <parent>
     <relativePath>parent</relativePath>
     <groupId>com.googlecode.owasp-java-html-sanitizer</groupId>
     <artifactId>parent</artifactId>
-    <version>20190820.1-SNAPSHOT</version>
+    <version>20200713.2-SNAPSHOT</version>
   </parent>
 
   <name>OWASP Java HTML Sanitizer</name>
@@ -65,6 +65,26 @@
           <target>1.7</target>
         </configuration>
       </plugin>
+      <plugin>
+        <groupId>org.apache.felix</groupId>
+        <artifactId>maven-bundle-plugin</artifactId>
+      </plugin>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-verifier-plugin</artifactId>
+          <configuration>
+            <verificationFile>src/test/resources/osgi-integration-verification.xml</verificationFile>
+          </configuration>
+          <executions>
+            <execution>
+              <id>main</id>
+              <phase>verify</phase>
+              <goals>
+                <goal>verify</goal>
+              </goals>
+            </execution>
+          </executions>
+        </plugin>
     </plugins>
   </build>
 
@@ -106,9 +126,9 @@
       <!-- `mvn compile site` will generate target/site/findbugs.html -->
       <!-- http://gleclaire.github.io/findbugs-maven-plugin/dependency-info.html -->
       <plugin>
-        <groupId>org.codehaus.mojo</groupId>
-        <artifactId>findbugs-maven-plugin</artifactId>
-        <version>3.0.2</version>
+        <groupId>com.github.spotbugs</groupId>
+        <artifactId>spotbugs-maven-plugin</artifactId>
+        <version>3.1.12.2</version>
         <configuration>
           <!--
             Enables analysis which takes more memory but finds more bugs.
